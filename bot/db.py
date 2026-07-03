@@ -23,6 +23,19 @@ class Application:
     created_at: str
 
 
+@dataclass(frozen=True)
+class PersonalLink:
+    token: str
+    amount: str
+    template_files: list[str]
+    product_links: list[str]
+    created_at: str
+    expires_at: str
+    used_at: str | None
+    used_by_user_id: int | None
+    application_id: int | None
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -52,6 +65,106 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS personal_links (
+                    token TEXT PRIMARY KEY,
+                    amount TEXT NOT NULL,
+                    template_files_json TEXT NOT NULL DEFAULT '[]',
+                    product_links_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT,
+                    used_by_user_id INTEGER,
+                    application_id INTEGER
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_personal_links_expires_at ON personal_links(expires_at)"
+            )
+            conn.commit()
+
+    def delete_expired_links(self, now_iso: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM personal_links WHERE expires_at < ?",
+                (now_iso,),
+            )
+            conn.commit()
+
+    def create_personal_link(
+        self,
+        *,
+        token: str,
+        amount: str,
+        template_files: list[str],
+        product_links: list[str],
+        created_at: str,
+        expires_at: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO personal_links (
+                    token, amount, template_files_json, product_links_json,
+                    created_at, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    token,
+                    amount,
+                    json.dumps(template_files, ensure_ascii=False),
+                    json.dumps(product_links, ensure_ascii=False),
+                    created_at,
+                    expires_at,
+                ),
+            )
+            conn.commit()
+
+    def get_personal_link(self, token: str) -> PersonalLink | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM personal_links WHERE token = ?",
+                (token,),
+            ).fetchone()
+        return self._row_to_personal_link(row) if row else None
+
+    def get_personal_link_by_application_id(self, application_id: int) -> PersonalLink | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM personal_links WHERE application_id = ?",
+                (application_id,),
+            ).fetchone()
+        return self._row_to_personal_link(row) if row else None
+
+    def mark_personal_link_used(
+        self,
+        *,
+        token: str,
+        user_id: int,
+        application_id: int | None,
+        used_at: str,
+    ) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE personal_links
+                SET used_at = ?, used_by_user_id = ?, application_id = ?
+                WHERE token = ? AND used_at IS NULL AND expires_at >= ?
+                """,
+                (used_at, user_id, application_id, token, used_at),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def attach_application_to_link(self, token: str, application_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE personal_links SET application_id = ? WHERE token = ?",
+                (application_id, token),
             )
             conn.commit()
 
@@ -155,6 +268,24 @@ class Database:
             ).fetchone()
         return self._row_to_application(row) if row else None
 
+    def latest_with_payment_status_for_user(
+        self,
+        user_id: int,
+        payment_status: str,
+    ) -> Application | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM applications
+                WHERE user_id = ?
+                  AND payment_status = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id, payment_status),
+            ).fetchone()
+        return self._row_to_application(row) if row else None
+
     @staticmethod
     def _row_to_application(row: sqlite3.Row) -> Application:
         return Application(
@@ -170,4 +301,18 @@ class Database:
             invoice_text=row["invoice_text"],
             payment_status=row["payment_status"],
             created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _row_to_personal_link(row: sqlite3.Row) -> PersonalLink:
+        return PersonalLink(
+            token=row["token"],
+            amount=row["amount"],
+            template_files=json.loads(row["template_files_json"]),
+            product_links=json.loads(row["product_links_json"]),
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            used_at=row["used_at"],
+            used_by_user_id=row["used_by_user_id"],
+            application_id=row["application_id"],
         )

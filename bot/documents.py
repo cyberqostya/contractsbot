@@ -34,6 +34,21 @@ MONTHS_GENITIVE = {
     12: "декабря",
 }
 
+MONTHS_NOMINATIVE = {
+    1: "январь",
+    2: "февраль",
+    3: "март",
+    4: "апрель",
+    5: "май",
+    6: "июнь",
+    7: "июль",
+    8: "август",
+    9: "сентябрь",
+    10: "октябрь",
+    11: "ноябрь",
+    12: "декабрь",
+}
+
 
 def render_contract(
     *,
@@ -60,8 +75,6 @@ def render_contract(
     if requisites.get("passport_ser_num"):
         digits = re.sub(r"\D", "", requisites["passport_ser_num"])
         context["passport_ser_num"] = f"{digits[:4]} {digits[4:]}"
-        context["passport_series"] = digits[:4]
-        context["passport_number"] = digits[4:]
     context["passport_issue_date"] = format_user_date(
         requisites.get("passport_issue_date", "")
     )
@@ -73,6 +86,7 @@ def render_contract(
             "status_label": status_label(status),
             "year": str(today.year),
             "date": format_document_date(today),
+            "monthyear": format_publication_monthyear(today),
             "ruk_name": settings.ruk_name,
             "fio_initials": make_fio_initials(requisites.get("fio", "")),
             "created_at": datetime.now().strftime("%d.%m.%Y"),
@@ -98,6 +112,20 @@ def make_contract_number(current_date: date, application_id: int) -> str:
 def format_document_date(value: date) -> str:
     month = MONTHS_GENITIVE[value.month]
     return f"«{value.day:02d}» {month}  {value.year} г."
+
+
+def format_publication_monthyear(value: date) -> str:
+    current = MONTHS_NOMINATIVE[value.month]
+    days_in_month = (date(value.year + (value.month // 12), (value.month % 12) + 1, 1) - date(value.year, value.month, 1)).days
+    if days_in_month - value.day > 4:
+        return f"{current} {value.year} г."
+
+    next_month_number = (value.month % 12) + 1
+    next_year = value.year + (1 if value.month == 12 else 0)
+    next_month = MONTHS_NOMINATIVE[next_month_number]
+    if next_year == value.year:
+        return f"{current}-{next_month} {value.year} г."
+    return f"{current} {value.year}-{next_month} {next_year} г."
 
 
 def format_user_date(value: str) -> str:

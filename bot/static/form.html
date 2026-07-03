@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BogrBot Form</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #17202a;
+      --muted: #657282;
+      --line: #d8dee8;
+      --field: #fbfcfe;
+      --accent: #2374ab;
+      --accent-strong: #175d8d;
+      --danger: #b42318;
+      --ok: #16784f;
+      --shadow: 0 10px 28px rgba(23, 32, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      padding: 18px;
+    }
+
+    .layout {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+
+    .topline {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.15;
+      font-weight: 720;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+      margin-top: 4px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .section {
+      padding: 18px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section:first-child {
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 17px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+      margin-bottom: 14px;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--field);
+      color: var(--text);
+      outline: none;
+      padding: 0 12px;
+      transition: border-color .15s, box-shadow .15s, background .15s;
+    }
+
+    input {
+      height: 44px;
+    }
+
+    textarea {
+      min-height: 96px;
+      padding: 12px;
+      line-height: 1.45;
+      resize: vertical;
+    }
+
+    input:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(35, 116, 171, .14);
+    }
+
+    input.invalid,
+    textarea.invalid {
+      border-color: var(--danger);
+      background: #fff8f7;
+    }
+
+    input.invalid:focus,
+    textarea.invalid:focus {
+      box-shadow: 0 0 0 3px rgba(180, 35, 24, .13);
+    }
+
+    .field-error {
+      margin: -1px 0 0;
+      color: var(--danger);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #eef2f6;
+    }
+
+    .segment {
+      height: 42px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    .segment.active {
+      background: #fff;
+      color: var(--accent-strong);
+      box-shadow: 0 1px 5px rgba(23, 32, 42, .12);
+    }
+
+    .btn {
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 0 16px;
+      cursor: pointer;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-strong);
+    }
+
+    .btn:disabled {
+      opacity: .62;
+      cursor: not-allowed;
+    }
+
+    .notice {
+      margin: 0 0 14px;
+      padding: 11px 12px;
+      border-radius: 8px;
+      line-height: 1.4;
+      font-size: 14px;
+    }
+
+    .notice.error {
+      background: #fff0ef;
+      color: var(--danger);
+      border: 1px solid #ffd0cb;
+    }
+
+    .notice.ok {
+      background: #edf8f3;
+      color: var(--ok);
+      border: 1px solid #c6eadb;
+    }
+
+    [v-cloak] {
+      display: none;
+    }
+
+    @media (max-width: 620px) {
+      .shell {
+        padding: 14px;
+      }
+
+      h1 {
+        font-size: 23px;
+      }
+
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" v-cloak>
+    <main class="shell">
+      <div class="layout">
+        <header class="topline">
+          <div>
+            <h1>Анкета для договора</h1>
+            <div class="subtle">Сумма договора: {{ amountFormatted || "..." }}</div>
+          </div>
+        </header>
+
+        <form class="panel" @submit.prevent="submit">
+          <p v-if="error" class="notice error">{{ error }}</p>
+          <p v-if="success" class="notice ok">{{ success }}</p>
+
+          <section class="section">
+            <h2 class="section-title">Статус</h2>
+            <div class="segmented">
+              <button v-for="item in statuses" :key="item.value" class="segment" :class="{ active: form.status === item.value }" type="button" @click="setStatus(item.value)">
+                {{ item.label }}
+              </button>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">Реквизиты</h2>
+            <div class="grid-2">
+              <div v-for="field in activeFields" :key="field.key" class="field">
+                <label :for="field.key">{{ field.label }}</label>
+                <textarea v-if="isTextarea(field.key)" :id="field.key" v-model.trim="form.requisites[field.key]" :class="{ invalid: errors[field.key] }" :placeholder="field.example" autocomplete="off" @input="clearError(field.key)"></textarea>
+                <input v-else :id="field.key" v-model.trim="form.requisites[field.key]" :class="{ invalid: errors[field.key] }" :inputmode="inputMode(field.key)" enterkeyhint="done" :placeholder="field.example" autocomplete="off" @keydown.enter.prevent="closeKeyboard" @input="onFieldInput(field.key)">
+                <p v-if="errors[field.key]" class="field-error">{{ errors[field.key] }}</p>
+              </div>
+            </div>
+          </section>
+
+          <button class="btn btn-primary" type="submit" :disabled="loading">{{ loading ? "Формирую договор..." : "Отправить данные" }}</button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+
+    const params = new URLSearchParams(window.location.search);
+
+    Vue.createApp({
+      data() {
+        return {
+          token: params.get("token") || "",
+          amountFormatted: "",
+          statuses: [],
+          fields: {},
+          loading: false,
+          error: "",
+          errors: {},
+          success: "",
+          form: {
+            status: "sz",
+            requisites: {},
+          },
+        };
+      },
+      computed: {
+        initData() {
+          return tg && tg.initData ? tg.initData : "";
+        },
+        activeFields() {
+          return this.fields[this.form.status] || [];
+        },
+      },
+      mounted() {
+        this.bootstrap();
+      },
+      methods: {
+        headers() {
+          return {
+            "Content-Type": "application/json",
+            "X-Telegram-Init-Data": this.initData,
+          };
+        },
+        async bootstrap() {
+          this.error = "";
+          try {
+            const response = await fetch(`/api/form/bootstrap?token=${encodeURIComponent(this.token)}`, { headers: this.headers() });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || "Не удалось открыть форму");
+            }
+            this.amountFormatted = data.amountFormatted;
+            this.statuses = data.statuses || [];
+            this.fields = data.fields || {};
+            this.form.status = this.statuses[0] ? this.statuses[0].value : "sz";
+            this.ensureValues();
+          } catch (error) {
+            this.error = error.message;
+          }
+        },
+        ensureValues() {
+          for (const fields of Object.values(this.fields)) {
+            for (const field of fields) {
+              if (!(field.key in this.form.requisites)) {
+                this.form.requisites[field.key] = "";
+              }
+            }
+          }
+        },
+        setStatus(status) {
+          this.form.status = status;
+          this.errors = {};
+          this.ensureValues();
+        },
+        inputMode(key) {
+          if (["inn", "ogrn", "bik", "checking_account", "correspondent_account", "passport_ser_num", "passport_department_code", "phone", "passport_issue_date"].includes(key)) {
+            return "numeric";
+          }
+          if (key === "email") {
+            return "email";
+          }
+          return "text";
+        },
+        isTextarea(key) {
+          return ["passport_issued_by", "passport_registration", "legal_address"].includes(key);
+        },
+        onFieldInput(key) {
+          if (key === "passport_issue_date") {
+            this.form.requisites[key] = this.formatDateInput(this.form.requisites[key]);
+          }
+          if (key === "passport_department_code") {
+            this.form.requisites[key] = this.formatDepartmentCodeInput(this.form.requisites[key]);
+          }
+          this.clearError(key);
+        },
+        formatDateInput(value) {
+          const digits = this.onlyDigits(value).slice(0, 8);
+          if (digits.length <= 2) return digits;
+          if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+          return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+        },
+        formatDepartmentCodeInput(value) {
+          const digits = this.onlyDigits(value).slice(0, 6);
+          if (digits.length <= 3) return digits;
+          return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+        },
+        closeKeyboard() {
+          if (document.activeElement && typeof document.activeElement.blur === "function") {
+            document.activeElement.blur();
+          }
+          if (tg && typeof tg.hideKeyboard === "function") {
+            tg.hideKeyboard();
+          }
+        },
+        clearError(key) {
+          if (!this.errors[key]) return;
+          const next = { ...this.errors };
+          delete next[key];
+          this.errors = next;
+        },
+        onlyDigits(value) {
+          return String(value || "").replace(/\D/g, "");
+        },
+        validate() {
+          const errors = {};
+          for (const field of this.activeFields) {
+            const value = String(this.form.requisites[field.key] || "").trim();
+            if (!value) {
+              errors[field.key] = "Заполните поле.";
+              continue;
+            }
+            if (field.key === "fio") {
+              const parts = value.split(/\s+/).filter(Boolean);
+              if (value.includes(".") || /\d/.test(value) || parts.length < 3) {
+                errors[field.key] = "Введите фамилию, имя и отчество полностью, без инициалов, точек и цифр.";
+              }
+            }
+            if (field.key === "inn" && this.onlyDigits(value).length !== 12) errors[field.key] = "ИНН должен содержать 12 цифр.";
+            if (field.key === "ogrn" && this.onlyDigits(value).length !== 15) errors[field.key] = "ОГРН должен содержать 15 цифр.";
+            if (field.key === "bik" && this.onlyDigits(value).length !== 9) errors[field.key] = "БИК должен содержать 9 цифр.";
+            if (["checking_account", "correspondent_account"].includes(field.key) && this.onlyDigits(value).length !== 20) errors[field.key] = `${field.label.split(" ")[0]} должен содержать 20 цифр.`;
+            if (field.key === "passport_ser_num" && this.onlyDigits(value).length !== 10) errors[field.key] = "Серия и номер паспорта должны содержать 10 цифр.";
+            if (field.key === "passport_department_code" && this.onlyDigits(value).length !== 6) errors[field.key] = "Код подразделения должен содержать 6 цифр.";
+            if (field.key === "passport_issue_date" && !/^\d{2}\.\d{2}\.\d{4}$/.test(value)) errors[field.key] = "Введите дату в формате ДД.ММ.ГГГГ.";
+            if (field.key === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) errors[field.key] = "Введите корректный email.";
+            if (field.key === "phone" && this.onlyDigits(value).length < 7) errors[field.key] = "В телефоне должно быть минимум 7 цифр.";
+          }
+          this.errors = errors;
+          return Object.keys(errors).length === 0;
+        },
+        async submit() {
+          this.error = "";
+          this.success = "";
+          if (!this.validate()) return;
+          this.closeKeyboard();
+          this.loading = true;
+          try {
+            const response = await fetch("/api/form/submit", {
+              method: "POST",
+              headers: this.headers(),
+              body: JSON.stringify({
+                token: this.token,
+                status: this.form.status,
+                requisites: this.form.requisites,
+              }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              if (data.errors) {
+                this.errors = data.errors;
+                return;
+              }
+              throw new Error(data.error || "Не удалось отправить данные");
+            }
+            this.success = "Данные приняты. Договор отправлен в чат бота.";
+            if (tg && tg.HapticFeedback) {
+              tg.HapticFeedback.notificationOccurred("success");
+            }
+            setTimeout(() => {
+              if (tg) tg.close();
+            }, 700);
+          } catch (error) {
+            this.error = error.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+      },
+    }).mount("#app");
+  </script>
+</body>
+</html>

@@ -1,76 +1,54 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
-import hmac
 import html
 import re
 import shutil
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (
-    CallbackQuery,
-    Document,
-    FSInputFile,
-    Message,
-    PhotoSize,
-)
+from aiogram.types import Document, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonDefault, MenuButtonWebApp, Message, PhotoSize, WebAppInfo
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.client.default import DefaultBotProperties
 
 from bot.config import Settings, load_settings
-from bot.db import Application, Database
+from bot.db import Application, Database, PersonalLink
 from bot.documents import (
     DocumentError,
     amount_found_near_total,
-    contract_filename,
     extract_text_from_invoice,
-    render_contract,
     signed_contract_has_marks,
 )
-from bot.forms import fields_for_status, status_label
-from bot.keyboards import confirm_keyboard, paid_keyboard, status_keyboard
-from bot.states import BloggerFlow
+from bot.forms import status_label
+from bot.web import start_web_server
 
 
 router = Router()
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 
-def make_link_payload(amount: str, settings: Settings) -> str:
-    amount = re.sub(r"\D", "", amount)
-    signature = hmac.new(
-        settings.link_secret.encode("utf-8"),
-        amount.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    short_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")[:10]
-    return f"a_{amount}_{short_signature}"
-
-
-def parse_amount_from_args(args: str | None, settings: Settings) -> str | None:
+def parse_token_from_args(args: str | None) -> str | None:
     if not args:
         return None
-    match = re.search(r"(?:^|[?&\s])a_([0-9]+)_([A-Za-z0-9_-]+)", args)
-    if match:
-        amount = match.group(1)
-        expected_payload = make_link_payload(amount, settings)
-        expected_signature = expected_payload.rsplit("_", 1)[1]
-        if hmac.compare_digest(match.group(2), expected_signature):
-            return amount
+    token = args.strip().split()[0]
+    if re.fullmatch(r"[A-Za-z0-9_-]{16,80}", token):
+        return token
     return None
 
 
-def clean_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip()
+def now_moscow() -> datetime:
+    return datetime.now(MOSCOW_TZ)
+
+
+def iso_moscow(value: datetime) -> str:
+    return value.isoformat(timespec="seconds")
 
 
 def format_amount(value: str) -> str:
@@ -80,40 +58,44 @@ def format_amount(value: str) -> str:
     return f"{int(digits):,}".replace(",", ".")
 
 
-def normalize_field_value(key: str, value: str) -> str:
-    if key in {
-        "inn",
-        "ogrn",
-        "bik",
-        "checking_account",
-        "correspondent_account",
-    }:
-        return re.sub(r"\D", "", value)
-    if key == "passport_ser_num":
-        digits = re.sub(r"\D", "", value)
-        return f"{digits[:4]} {digits[4:]}"
-    if key == "email":
-        return value.strip().lower()
-    return value
+def admin_web_app_url(settings: Settings, amount: str | None = None) -> str:
+    url = f"{settings.webapp_base_url}/admin"
+    query: dict[str, str] = {}
+    if amount:
+        query["amount"] = amount
+    if query:
+        url = f"{url}?{urlencode(query)}"
+    return url
 
 
-def summary_text(status: str, amount: str, requisites: dict[str, str]) -> str:
-    fields = fields_for_status(status)
-    lines = [
-        "Проверьте данные:",
-        "",
-        f"Статус: <b>{status_label(status)}</b>",
-        f"Сумма: <b>{format_amount(amount)} руб.</b>",
-    ]
-    for field in fields:
-        lines.extend(
+def admin_web_app_keyboard(settings: Settings, amount: str | None = None) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
             [
-                "",
-                f"{field.label}:",
-                f"<b>{html.escape(requisites.get(field.key, ''))}</b>",
+                InlineKeyboardButton(
+                    text="Создать новую заявку",
+                    web_app=WebAppInfo(url=admin_web_app_url(settings, amount)),
+                )
             ]
-        )
-    return "\n".join(lines)
+        ]
+    )
+
+
+def user_web_app_url(settings: Settings, token: str) -> str:
+    return f"{settings.webapp_base_url}/form?{urlencode({'token': token})}"
+
+
+def user_web_app_keyboard(settings: Settings, token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Заполнить анкету",
+                    web_app=WebAppInfo(url=user_web_app_url(settings, token)),
+                )
+            ]
+        ]
+    )
 
 
 def user_link(application: Application) -> str:
@@ -122,206 +104,114 @@ def user_link(application: Application) -> str:
     return f"tg://user?id={application.user_id}"
 
 
-async def ask_next_field(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    status = data["status"]
-    index = int(data.get("field_index", 0))
-    fields = fields_for_status(status)
-
-    if index >= len(fields):
-        requisites = data.get("requisites", {})
-        await state.set_state(BloggerFlow.confirming_requisites)
-        await message.answer(
-            summary_text(status, data["amount"], requisites),
-            reply_markup=confirm_keyboard(),
-        )
-        return
-
-    field = fields[index]
-    text = f"{index + 1}/{len(fields)}\nВведите <b>{html.escape(field.label)}</b>"
-    if field.example:
-        text += f"\n<i>Пример: {html.escape(field.example)}</i>"
-    await message.answer(text)
-
-
 @router.message(CommandStart())
 async def start(
     message: Message,
     command: CommandObject,
     state: FSMContext,
     settings: Settings,
+    db: Database,
 ) -> None:
-    amount = parse_amount_from_args(command.args, settings)
-    await start_with_amount(message, state, amount)
+    token = parse_token_from_args(command.args)
+    if token is None and message.from_user.id in settings.admin_ids:
+        await state.clear()
+        await send_admin_home(message, settings)
+        return
+    if message.from_user.id not in settings.admin_ids:
+        await reset_user_menu_button(message.bot, message.from_user.id)
+    await start_with_link(message, state, settings, db, token)
 
 
-@router.message(F.text.regexp(r"^/start\?a_[0-9]"))
-async def start_question_mark(message: Message, state: FSMContext, settings: Settings) -> None:
-    amount = parse_amount_from_args(message.text.replace("/start?", "", 1), settings)
-    await start_with_amount(message, state, amount)
+@router.message(F.text.regexp(r"^/start\?[A-Za-z0-9_-]"))
+async def start_question_mark(message: Message, state: FSMContext, settings: Settings, db: Database) -> None:
+    token = parse_token_from_args(message.text.replace("/start?", "", 1))
+    await start_with_link(message, state, settings, db, token)
 
 
-async def start_with_amount(message: Message, state: FSMContext, amount: str | None) -> None:
-    if amount is None:
+async def send_admin_home(message: Message, settings: Settings) -> None:
+    if settings.webapp_base_url:
+        await set_admin_menu_button(message.bot, message.from_user.id, settings)
+        await message.answer(
+            "Админ-панель готова. Нажмите кнопку меню внизу чата или кнопку ниже, чтобы создать новую заявку.",
+            reply_markup=admin_web_app_keyboard(settings),
+        )
+        return
+
+    await message.answer(
+        "Админ-панель не подключена. Укажите WEBAPP_BASE_URL в .env, чтобы открыть веб-форму из меню Telegram."
+    )
+
+
+async def start_with_link(
+    message: Message,
+    state: FSMContext,
+    settings: Settings,
+    db: Database,
+    token: str | None,
+) -> None:
+    now = now_moscow()
+    db.delete_expired_links(iso_moscow(now))
+    link = db.get_personal_link(token) if token else None
+    if link is None:
         await state.clear()
         await message.answer(
             "Бот работает только по персональной ссылке. Если вы ожидаете договор, "
             "попросите менеджера прислать вам ссылку."
         )
         return
-
-    await state.set_state(BloggerFlow.choosing_status)
-    await state.update_data(amount=amount, requisites={}, field_index=0)
-    await message.answer(
-        f"Сумма договора: {html.escape(amount)}\n\nВыберите ваш статус:",
-        reply_markup=status_keyboard(),
-    )
-
-
-@router.message(Command("link"))
-async def create_link(message: Message, command: CommandObject, settings: Settings, bot: Bot) -> None:
-    if message.from_user.id not in settings.admin_ids:
+    if link.used_at is not None:
+        await state.clear()
+        await message.answer("Эта персональная ссылка уже использована.")
         return
-    amount = re.sub(r"\D", "", command.args or "")
-    if not amount:
-        await message.answer("Использование: /link 15000")
+    if datetime.fromisoformat(link.expires_at) < now:
+        await state.clear()
+        await message.answer("Срок действия персональной ссылки истек. Попросите менеджера создать новую.")
+        return
+    if not settings.webapp_base_url:
+        await state.clear()
+        await message.answer("Форма временно недоступна. Попросите менеджера проверить настройки бота.")
         return
 
-    bot_info = await bot.get_me()
-    payload = make_link_payload(amount, settings)
-    await message.answer(
-        f"Персональная ссылка на сумму <b>{format_amount(amount)} руб.</b>:\n"
-        f"https://t.me/{bot_info.username}?start={payload}"
-    )
-
-
-@router.message(Command("cancel"))
-async def cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Заполнение отменено. Можно начать заново по персональной ссылке.")
-
-
-@router.callback_query(BloggerFlow.choosing_status, F.data.startswith("status:"))
-async def choose_status(callback: CallbackQuery, state: FSMContext) -> None:
-    status = callback.data.split(":", 1)[1]
-    await state.set_state(BloggerFlow.filling_requisites)
-    await state.update_data(status=status, requisites={}, field_index=0)
-    await callback.message.edit_text(f"Статус: {status_label(status)}")
-    await ask_next_field(callback.message, state)
-    await callback.answer()
-
-
-@router.message(BloggerFlow.filling_requisites, F.text)
-async def fill_requisites(message: Message, state: FSMContext) -> None:
-    value = clean_text(message.text)
-    if not value:
-        await message.answer("Похоже, поле пустое. Введите значение текстом.")
-        return
-
-    data = await state.get_data()
-    status = data["status"]
-    index = int(data.get("field_index", 0))
-    fields = fields_for_status(status)
-    field = fields[index]
-    validation_error = field.validate(value)
-    if validation_error:
-        text = validation_error
-        if field.example:
-            text += f"\n<i>Пример: {html.escape(field.example)}</i>"
-        await message.answer(text)
-        return
-
-    requisites = dict(data.get("requisites", {}))
-    requisites[field.key] = normalize_field_value(field.key, value)
-
-    await state.update_data(requisites=requisites, field_index=index + 1)
-    await ask_next_field(message, state)
-
-
-@router.message(BloggerFlow.filling_requisites)
-async def reject_non_text_field(message: Message) -> None:
-    await message.answer("Пожалуйста, введите значение обычным текстом.")
-
-
-@router.callback_query(BloggerFlow.confirming_requisites, F.data == "form:restart")
-async def restart_form(callback: CallbackQuery, state: FSMContext) -> None:
-    data = await state.get_data()
-    await state.set_state(BloggerFlow.choosing_status)
-    await state.update_data(amount=data["amount"], requisites={}, field_index=0)
-    await callback.message.edit_text(
-        f"Сумма договора: {html.escape(data['amount'])}\n\nВыберите ваш статус:",
-        reply_markup=status_keyboard(),
+    await message.answer(
+        f"Сумма договора: {html.escape(link.amount)} руб.\n\nОткройте форму и заполните данные для договора.",
+        reply_markup=user_web_app_keyboard(settings, link.token),
     )
-    await callback.answer()
 
 
-@router.callback_query(BloggerFlow.confirming_requisites, F.data == "form:confirm")
-async def confirm_form(
-    callback: CallbackQuery,
-    state: FSMContext,
+async def send_tz_files_to_user(
+    bot: Bot,
+    user_id: int,
     settings: Settings,
-    db: Database,
+    link: PersonalLink,
 ) -> None:
-    data = await state.get_data()
-    user = callback.from_user
-    requisites = data["requisites"]
-    amount = data["amount"]
-    status = data["status"]
-
-    application_id = db.create_application(
-        user_id=user.id,
-        username=user.username,
-        amount=amount,
-        status=status,
-        requisites=requisites,
-        generated_contract_path="",
-        created_at=datetime.now(MOSCOW_TZ).strftime("%H:%M %d.%m.%Y"),
-    )
-
-    await callback.message.edit_text("Генерирую договор. Это может занять несколько секунд.")
-    try:
-        async with ChatActionSender.upload_document(bot=callback.bot, chat_id=user.id):
-            pdf_path = await asyncio.to_thread(
-                render_contract,
-                settings=settings,
-                application_id=application_id,
-                amount=amount,
-                status=status,
-                requisites=requisites,
-            )
-    except DocumentError as error:
-        await callback.message.answer(f"Не удалось подготовить договор: {error}")
-        await callback.answer()
-        return
-
-    await state.set_state(BloggerFlow.waiting_signed_contract)
-    await state.update_data(application_id=application_id)
-
-    await callback.message.answer_document(
-        FSInputFile(pdf_path, filename=contract_filename(requisites.get("fio", ""))),
-        caption=(
-            "Договор готов. Подпишите его и отправьте сюда PDF-файл подписанного договора."
-        ),
-    )
-    shutil.rmtree(pdf_path.parent, ignore_errors=True)
-    await callback.answer()
+    for file_name in link.template_files:
+        path = settings.tztemplates_dir / file_name
+        if path.is_file():
+            await bot.send_document(user_id, FSInputFile(path), caption="Техническое задание для рекламы")
 
 
-@router.message(BloggerFlow.waiting_signed_contract, F.document)
+@router.message(F.document)
 async def receive_signed_contract(
     message: Message,
-    state: FSMContext,
     settings: Settings,
     db: Database,
     bot: Bot,
 ) -> None:
+    application = db.latest_with_payment_status_for_user(
+        message.from_user.id,
+        "waiting_signed_contract",
+    )
+    if application is None:
+        await receive_invoice(message, settings, db, bot)
+        return
+
     document = message.document
     if document.mime_type != "application/pdf":
         await message.answer("Подписанный договор нужно отправить PDF-файлом.")
         return
 
-    data = await state.get_data()
-    application_id = int(data["application_id"])
+    application_id = application.id
     signed_dir = settings.output_dir / str(application_id)
     signed_dir.mkdir(parents=True, exist_ok=True)
     signed_path = signed_dir / "signed_contract.pdf"
@@ -339,30 +229,33 @@ async def receive_signed_contract(
         return
 
     db.update_files(application_id, signed_contract_file_id=document.file_id)
-    await state.set_state(BloggerFlow.waiting_invoice)
-    await message.answer("Принял договор. Теперь отправьте счет: PDF, PNG, JPG или JPEG.")
+    db.set_status(application_id, "waiting_invoice")
+    await message.answer("Принял договор. Теперь отправьте счет в формате PDF, PNG или JPG")
 
 
-@router.message(BloggerFlow.waiting_signed_contract)
-async def reject_signed_contract(message: Message) -> None:
-    await message.answer("Пожалуйста, отправьте подписанный договор PDF-файлом.")
-
-
-@router.message(BloggerFlow.waiting_invoice, F.document | F.photo)
+@router.message(F.document | F.photo)
 async def receive_invoice(
     message: Message,
-    state: FSMContext,
     settings: Settings,
     db: Database,
     bot: Bot,
 ) -> None:
-    data = await state.get_data()
-    application_id = int(data["application_id"])
-    application = db.get_application(application_id)
-    if application is None:
-        await message.answer("Не нашел вашу заявку. Начните заново по персональной ссылке.")
-        await state.clear()
+    signed_application = db.latest_with_payment_status_for_user(
+        message.from_user.id,
+        "waiting_signed_contract",
+    )
+    if signed_application is not None:
+        await message.answer("Пожалуйста, отправьте подписанный договор PDF-файлом.")
         return
+
+    application = db.latest_with_payment_status_for_user(
+        message.from_user.id,
+        "waiting_invoice",
+    )
+    if application is None:
+        await message.answer("Для начала откройте бота по персональной ссылке с суммой.")
+        return
+    application_id = application.id
 
     file_id, filename = invoice_file_info(message)
     if file_id is None or filename is None:
@@ -390,14 +283,15 @@ async def receive_invoice(
 
     db.update_files(application_id, invoice_file_id=file_id, invoice_text=text)
     db.set_status(application_id, "waiting_admin_payment")
-    await state.set_state(BloggerFlow.waiting_payment)
-
     updated = db.get_application(application_id)
+    personal_link = db.get_personal_link_by_application_id(application_id)
     if updated is not None:
         await send_to_admins(bot, settings, updated)
     shutil.rmtree(invoice_dir, ignore_errors=True)
 
-    await message.answer("Счёт принят. Документы отправлены на оплату. Оплата поступит в течение 5 рабочих дней.")
+    await message.answer("Счёт принят. Документы отправлены на оплату.\nОплата поступит в течение 5 рабочих дней.")
+    if personal_link is not None:
+        await send_tz_files_to_user(bot, message.from_user.id, settings, personal_link)
 
 
 def invoice_file_info(message: Message) -> tuple[str | None, str | None]:
@@ -425,11 +319,20 @@ def document_file_info(document: Document) -> tuple[str | None, str | None]:
     return document.file_id, f"invoice{suffix}"
 
 
-async def send_to_admins(bot: Bot, settings: Settings, application: Application) -> None:
+async def send_to_admins(
+    bot: Bot,
+    settings: Settings,
+    application: Application,
+) -> None:
     fio = application.requisites.get("fio", "Без ФИО")
+    nickname = application.requisites.get("nickname", "").strip()
+    author_lines = ["Документы от"]
+    if nickname:
+        author_lines.append(f"<b>{html.escape(nickname)}</b>")
+    author_lines.append(f"<b>{html.escape(fio)}</b>")
+    author_text = "\n".join(author_lines)
     caption = (
-        f"Заявка от\n"
-        f"<b>{html.escape(fio)}</b>\n"
+        f"{author_text}\n"
         f"{html.escape(application.created_at)}\n"
         f"Сумма: <b>{format_amount(application.amount)} руб.</b>\n"
         f"{status_label(application.status)}\n"
@@ -446,8 +349,8 @@ async def send_to_admins(bot: Bot, settings: Settings, application: Application)
             admin_id,
             FSInputFile(invoice_file) if invoice_file else application.invoice_file_id,
             caption="Счёт",
-            reply_markup=paid_keyboard(application.id),
         )
+
 
 
 def find_local_invoice(directory: Path) -> Path | None:
@@ -458,34 +361,42 @@ def find_local_invoice(directory: Path) -> Path | None:
     return None
 
 
-@router.message(BloggerFlow.waiting_invoice)
-async def reject_invoice(message: Message) -> None:
-    await message.answer("Пожалуйста, отправьте счет файлом PDF, PNG, JPG или JPEG.")
+async def configure_admin_menu(bot: Bot, settings: Settings) -> None:
+    try:
+        await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+    except Exception as error:
+        print(f"Default menu setup error: {error}")
 
-
-@router.callback_query(F.data.startswith("paid:"))
-async def mark_paid(callback: CallbackQuery, settings: Settings, db: Database) -> None:
-    if callback.from_user.id not in settings.admin_ids:
-        await callback.answer("Недостаточно прав", show_alert=True)
+    if not settings.webapp_base_url:
         return
 
-    application_id = int(callback.data.split(":", 1)[1])
-    application = db.get_application(application_id)
-    if application is None:
-        await callback.answer("Заявка не найдена", show_alert=True)
-        return
+    for admin_id in settings.admin_ids:
+        await set_admin_menu_button(bot, admin_id, settings)
 
-    db.set_status(application_id, "paid")
-    await callback.bot.send_message(
-        application.user_id,
-        "Оплата успешно проведена. Деньги зачислятся на указанный вами счёт в ближайшее время.",
+
+async def set_admin_menu_button(bot: Bot, admin_id: int, settings: Settings) -> None:
+    menu_button = MenuButtonWebApp(
+        text="Создать заявку",
+        web_app=WebAppInfo(url=admin_web_app_url(settings)),
     )
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.answer("Блогер уведомлен")
+    try:
+        await bot.set_chat_menu_button(chat_id=admin_id, menu_button=menu_button)
+    except Exception as error:
+        print(f"Admin menu setup error for {admin_id}: {error}")
+
+
+async def reset_user_menu_button(bot: Bot, user_id: int) -> None:
+    try:
+        await bot.set_chat_menu_button(chat_id=user_id, menu_button=MenuButtonDefault())
+    except Exception as error:
+        print(f"User menu reset error for {user_id}: {error}")
 
 
 @router.message()
-async def fallback(message: Message) -> None:
+async def fallback(message: Message, settings: Settings) -> None:
+    if message.from_user.id in settings.admin_ids:
+        await send_admin_home(message, settings)
+        return
     await message.answer("Для начала откройте бота по персональной ссылке с суммой.")
 
 
@@ -501,4 +412,12 @@ async def main() -> None:
     dispatcher = Dispatcher(storage=MemoryStorage(), settings=settings, db=db)
     dispatcher.include_router(router)
 
-    await dispatcher.start_polling(bot)
+    await configure_admin_menu(bot, settings)
+    web_runner = None
+    if settings.webapp_enabled:
+        web_runner = await start_web_server(settings, db, bot)
+    try:
+        await dispatcher.start_polling(bot)
+    finally:
+        if web_runner is not None:
+            await web_runner.cleanup()
