@@ -16,6 +16,7 @@ class Application:
     status: str
     requisites: dict[str, str]
     generated_contract_path: str | None
+    generated_contract_sha256: str | None
     signed_contract_file_id: str | None
     invoice_file_id: str | None
     invoice_text: str | None
@@ -58,6 +59,7 @@ class Database:
                     status TEXT NOT NULL,
                     requisites_json TEXT NOT NULL,
                     generated_contract_path TEXT,
+                    generated_contract_sha256 TEXT,
                     signed_contract_file_id TEXT,
                     invoice_file_id TEXT,
                     invoice_text TEXT,
@@ -66,6 +68,7 @@ class Database:
                 )
                 """
             )
+            self._ensure_column(conn, "applications", "generated_contract_sha256", "TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS personal_links (
@@ -85,6 +88,12 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_personal_links_expires_at ON personal_links(expires_at)"
             )
             conn.commit()
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def delete_expired_links(self, now_iso: str) -> None:
         with self.connect() as conn:
@@ -239,6 +248,14 @@ class Database:
             )
             conn.commit()
 
+    def update_generated_contract_hash(self, application_id: int, sha256: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE applications SET generated_contract_sha256 = ? WHERE id = ?",
+                (sha256, application_id),
+            )
+            conn.commit()
+
     def set_status(self, application_id: int, payment_status: str) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -296,6 +313,7 @@ class Database:
             status=row["status"],
             requisites=json.loads(row["requisites_json"]),
             generated_contract_path=row["generated_contract_path"],
+            generated_contract_sha256=row["generated_contract_sha256"],
             signed_contract_file_id=row["signed_contract_file_id"],
             invoice_file_id=row["invoice_file_id"],
             invoice_text=row["invoice_text"],

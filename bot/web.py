@@ -18,7 +18,7 @@ from aiohttp import web
 
 from bot.config import Settings
 from bot.db import Database
-from bot.documents import DocumentError, contract_filename, render_contract
+from bot.documents import DocumentError, contract_filename, file_sha256, render_contract
 from bot.forms import STATUS_IP, STATUS_SZ, fields_for_status, status_label
 
 
@@ -495,6 +495,7 @@ async def submit_user_form(request: web.Request) -> web.Response:
         await bot.send_message(user_id, f"Не удалось подготовить договор: {error}")
         return json_error(f"Не удалось подготовить договор: {error}", status=500)
 
+    db.update_generated_contract_hash(application_id, await asyncio.to_thread(file_sha256, pdf_path))
     db.set_status(application_id, "waiting_signed_contract")
     await bot.send_document(
         user_id,

@@ -609,6 +609,10 @@
         if (!this.needsToken) {
           this.bootstrap();
         }
+        document.addEventListener("pointerdown", this.closeKeyboardOnOutsidePointer, { passive: true });
+      },
+      beforeUnmount() {
+        document.removeEventListener("pointerdown", this.closeKeyboardOnOutsidePointer);
       },
       methods: {
         headers() {
@@ -662,6 +666,12 @@
           if (tg && typeof tg.hideKeyboard === "function") {
             tg.hideKeyboard();
           }
+        },
+        closeKeyboardOnOutsidePointer(event) {
+          const active = document.activeElement;
+          if (!active || !["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
+          if (event.target.closest("input, textarea, select")) return;
+          this.closeKeyboard();
         },
         clearError(key) {
           if (!this.errors[key]) return;

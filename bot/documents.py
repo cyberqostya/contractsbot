@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -205,13 +206,22 @@ TRANSLIT = {
 }
 
 
-def contract_filename(fio: str) -> str:
-    surname = re.split(r"\s+", fio.strip())[0] if fio.strip() else "contract"
+def latin_surname(fio: str, fallback: str) -> str:
+    surname = re.split(r"\s+", fio.strip())[0] if fio.strip() else fallback
     latin = "".join(TRANSLIT.get(char.lower(), char.lower()) for char in surname)
     latin = re.sub(r"[^a-z0-9]+", "_", latin).strip("_")
     if latin:
         latin = latin[:1].upper() + latin[1:]
-    return f"{latin or 'Contract'}_contract.pdf"
+    return latin or fallback
+
+
+def contract_filename(fio: str) -> str:
+    return f"{latin_surname(fio, 'Contract')}_contract.pdf"
+
+
+def check_filename(fio: str, suffix: str) -> str:
+    clean_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    return f"{latin_surname(fio, 'Check')}_check{clean_suffix.lower()}"
 
 
 def convert_docx_to_pdf(docx_path: Path, output_dir: Path) -> None:
@@ -286,6 +296,24 @@ def amount_found_near_total(text: str, expected_amount: str) -> bool:
             candidate = normalize_money(amount_match.group(0))
             if candidate == expected:
                 return True
+    return False
+
+
+def file_sha256(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def contract_text_contains_amount(text: str, expected_amount: str) -> bool:
+    expected = normalize_money(expected_amount)
+    if not expected:
+        return False
+    for amount_match in re.finditer(r"\d[\d\s.,]*", text):
+        if normalize_money(amount_match.group(0)) == expected:
+            return True
     return False
 
 

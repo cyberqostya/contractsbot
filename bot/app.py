@@ -23,7 +23,11 @@ from bot.db import Application, Database, PersonalLink
 from bot.documents import (
     DocumentError,
     amount_found_near_total,
+    check_filename,
+    contract_text_contains_amount,
     extract_text_from_invoice,
+    extract_text_from_pdf,
+    file_sha256,
     signed_contract_has_marks,
 )
 from bot.forms import status_label
@@ -90,7 +94,7 @@ def user_web_app_keyboard(settings: Settings, token: str) -> InlineKeyboardMarku
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Заполнить анкету",
+                    text="Заполнить данные",
                     web_app=WebAppInfo(url=user_web_app_url(settings, token)),
                 )
             ]
@@ -174,7 +178,8 @@ async def start_with_link(
 
     await state.clear()
     await message.answer(
-        f"Сумма договора: {html.escape(link.amount)} руб.\n\nОткройте форму и заполните данные для договора.",
+        "Здравствуйте! Заполните, пожалуйста, ваши данные для создания договора "
+        f"на оказание услуг на сумму {html.escape(format_amount(link.amount))} руб.",
         reply_markup=user_web_app_keyboard(settings, link.token),
     )
 
@@ -217,7 +222,20 @@ async def receive_signed_contract(
     signed_path = signed_dir / "signed_contract.pdf"
     await bot.download(document.file_id, destination=signed_path)
     try:
-        has_signature = await asyncio.to_thread(signed_contract_has_marks, signed_path)
+        try:
+            uploaded_hash = await asyncio.to_thread(file_sha256, signed_path)
+            if application.generated_contract_sha256 and uploaded_hash == application.generated_contract_sha256:
+                await message.answer(
+                    "Я не вижу изменений в договоре. Похоже, вы отправили тот же PDF, который я сформировал. "
+                    "Подпишите договор и отправьте измененный PDF еще раз."
+                )
+                return
+
+            has_signature = await asyncio.to_thread(signed_contract_has_marks, signed_path)
+            signed_text = await asyncio.to_thread(extract_text_from_pdf, signed_path)
+        except Exception as error:
+            await message.answer(f"Не удалось проверить подписанный договор: {error}")
+            return
     finally:
         signed_path.unlink(missing_ok=True)
 
@@ -225,6 +243,14 @@ async def receive_signed_contract(
         await message.answer(
             "Я не вижу в PDF признаков подписи. Проверьте, что вы подписали документ "
             "и отправьте подписанный PDF еще раз."
+        )
+        return
+
+    if not contract_text_contains_amount(signed_text, application.amount):
+        await message.answer(
+            "В подписанном договоре не вижу исходную сумму договора. "
+            "Проверьте, что сумма не изменилась, и отправьте PDF еще раз.\n"
+            f"Ожидаемая сумма: {html.escape(format_amount(application.amount))} руб."
         )
         return
 
@@ -264,17 +290,19 @@ async def receive_invoice(
 
     invoice_dir = settings.output_dir / str(application_id)
     invoice_dir.mkdir(parents=True, exist_ok=True)
-    invoice_path = invoice_dir / filename
+    invoice_path = invoice_dir / check_filename(application.requisites.get("fio", ""), Path(filename).suffix)
 
     async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
         await bot.download(file_id, destination=invoice_path)
         try:
             text = await asyncio.to_thread(extract_text_from_invoice, invoice_path)
         except (DocumentError, RuntimeError) as error:
+            invoice_path.unlink(missing_ok=True)
             await message.answer(f"Не удалось прочитать счет: {error}")
             return
 
     if not amount_found_near_total(text, application.amount):
+        invoice_path.unlink(missing_ok=True)
         await message.answer(
             "Сумма счёта не соответствует сумме указанной в договоре. Проверьте счет и отправьте файл еще раз.\n"
             f"Ожидаемая сумма: {html.escape(application.amount)}"
@@ -282,14 +310,14 @@ async def receive_invoice(
         return
 
     db.update_files(application_id, invoice_file_id=file_id, invoice_text=text)
-    db.set_status(application_id, "waiting_admin_payment")
+    db.set_status(application_id, "completed")
     updated = db.get_application(application_id)
     personal_link = db.get_personal_link_by_application_id(application_id)
     if updated is not None:
         await send_to_admins(bot, settings, updated)
     shutil.rmtree(invoice_dir, ignore_errors=True)
 
-    await message.answer("Счёт принят. Документы отправлены на оплату.\nОплата поступит в течение 5 рабочих дней.")
+    await message.answer("Счёт принят. Документы переданы менеджеру.")
     if personal_link is not None:
         await send_tz_files_to_user(bot, message.from_user.id, settings, personal_link)
 
@@ -355,8 +383,11 @@ async def send_to_admins(
 
 def find_local_invoice(directory: Path) -> Path | None:
     for suffix in ("pdf", "png", "jpg", "jpeg"):
-        path = directory / f"invoice.{suffix}"
-        if path.exists():
+        invoice_path = directory / f"invoice.{suffix}"
+        if invoice_path.exists():
+            return invoice_path
+    for path in directory.glob("*_check.*"):
+        if path.suffix.lower().lstrip(".") in {"pdf", "png", "jpg", "jpeg"}:
             return path
     return None
 
