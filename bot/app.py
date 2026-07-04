@@ -17,6 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Document, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonDefault, MenuButtonWebApp, Message, PhotoSize, WebAppInfo
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from bot.config import Settings, load_settings
 from bot.db import Application, Database, PersonalLink
@@ -436,9 +437,11 @@ async def main() -> None:
     db = Database(settings.database_path)
     db.init()
 
+    session = AiohttpSession(proxy=settings.telegram_proxy_url) if settings.telegram_proxy_url else None
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=session,
     )
     dispatcher = Dispatcher(storage=MemoryStorage(), settings=settings, db=db)
     dispatcher.include_router(router)

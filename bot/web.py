@@ -223,11 +223,17 @@ def link_summary_message(link: str, amount: str, template_files: list[str], prod
 
 
 async def admin_page(request: web.Request) -> web.FileResponse:
-    return web.FileResponse(Path(__file__).parent / "static" / "admin.html")
+    response = web.FileResponse(Path(__file__).parent / "static" / "admin.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 async def user_form_page(request: web.Request) -> web.FileResponse:
-    return web.FileResponse(Path(__file__).parent / "static" / "form.html")
+    response = web.FileResponse(Path(__file__).parent / "static" / "form.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 async def admin_bootstrap(request: web.Request) -> web.Response:
@@ -516,6 +522,7 @@ def create_web_app(settings: Settings, db: Database, bot: Bot) -> web.Applicatio
     app.router.add_get("/", admin_page)
     app.router.add_get("/admin", admin_page)
     app.router.add_get("/form", user_form_page)
+    app.router.add_static("/static/", Path(__file__).parent / "static", name="static")
     app.router.add_get("/api/admin/bootstrap", admin_bootstrap)
     app.router.add_post("/api/admin/links", create_admin_link)
     app.router.add_post("/api/admin/links/send", send_admin_link)

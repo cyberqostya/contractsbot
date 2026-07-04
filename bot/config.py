@@ -24,6 +24,7 @@ class Settings:
     webapp_port: int
     webapp_base_url: str
     webapp_admin_token: str
+    telegram_proxy_url: str
     wbid: str
 
 
@@ -50,7 +51,7 @@ def load_settings() -> Settings:
         admin_ids=admin_ids,
         ruk_name=os.getenv("RUK_NAME", "Гунич И.И.").strip() or "Гунич И.И.",
         link_secret=os.getenv("LINK_SECRET", bot_token).strip() or bot_token,
-        database_path=Path(os.getenv("DATABASE_PATH", "data/bogrbot.sqlite3")),
+        database_path=Path(os.getenv("DATABASE_PATH", "data/babycollab.sqlite3")),
         templates_dir=Path(os.getenv("TEMPLATES_DIR", "wordtemplates")),
         tztemplates_dir=Path(os.getenv("TZTEMPLATES_DIR", "tztemplates")),
         output_dir=Path(os.getenv("OUTPUT_DIR", "generated")),
@@ -61,5 +62,6 @@ def load_settings() -> Settings:
         webapp_port=int(os.getenv("WEBAPP_PORT", "8080")),
         webapp_base_url=os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/"),
         webapp_admin_token=os.getenv("WEBAPP_ADMIN_TOKEN", "").strip(),
+        telegram_proxy_url=os.getenv("TELEGRAM_PROXY_URL", "").strip(),
         wbid=os.getenv("WBID", "10291").strip() or "10291",
     )

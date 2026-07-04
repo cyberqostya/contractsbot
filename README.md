@@ -1,4 +1,4 @@
-# BogrBot
+# BabycollabBot
 
 Telegram-бот на `aiogram 3` для автоматизации договоров и счетов блогеров.
 
@@ -48,13 +48,17 @@ RUK_NAME=Гунич И.И.
 LINK_SECRET=change-this-random-secret
 WEBAPP_BASE_URL=https://example.com
 WEBAPP_ADMIN_TOKEN=change-this-local-admin-token
+TELEGRAM_PROXY_URL=socks5://127.0.0.1:1080
 WBID=10291
+DATABASE_PATH=data/babycollab.sqlite3
 ```
 
 `ADMIN_IDS` можно указать через запятую: `123,456`.
 `WEBAPP_BASE_URL` нужен для кнопки меню Telegram WebApp. Это должен быть
 публичный HTTPS-адрес, который проксирует локальный веб-сервер бота. Для локальной
 проверки в обычном браузере можно открыть форму с `WEBAPP_ADMIN_TOKEN`.
+`TELEGRAM_PROXY_URL` нужен только на серверах, где прямой доступ к `api.telegram.org`
+закрыт. Если прокси не нужен, оставьте переменную пустой или удалите ее.
 
 Для конвертации DOCX в PDF нужен LibreOffice:
 
@@ -138,6 +142,7 @@ WEBAPP_HOST=127.0.0.1
 WEBAPP_PORT=8080
 WEBAPP_BASE_URL=https://example.com
 WEBAPP_ADMIN_TOKEN=change-this-local-admin-token
+TELEGRAM_PROXY_URL=socks5://127.0.0.1:1080
 WBID=10291
 ```
 
@@ -178,7 +183,7 @@ utm_content = пусто
 Бот вернет ссылку вида:
 
 ```text
-https://t.me/bogrcontractsbot?start=xxxxxxxxxxxxxxxxxxxxxxxx
+https://t.me/your_bot_username?start=xxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 Сумма в ссылке больше не видна. Ссылка живет 24 часа. Открыть ее могут разные люди,
@@ -192,9 +197,21 @@ https://t.me/bogrcontractsbot?start=xxxxxxxxxxxxxxxxxxxxxxxx
 
 После получения подписанного договора и счета бот отправит документы админу.
 
+## Локальные frontend-файлы
+
+Формы не зависят от внешних CDN во время работы. Скрипты должны лежать локально:
+
+```text
+bot/static/vendor/telegram-web-app.js
+bot/static/vendor/vue.global.prod.js
+```
+
+Если этих файлов нет на сервере, скачайте их один раз при деплое или перенесите
+из локальной папки проекта.
+
 ## SQLite
 
-Бот использует SQLite-файл `data/bogrbot.sqlite3` по умолчанию. Это обычный файл
+Бот использует SQLite-файл `data/babycollab.sqlite3` по умолчанию. Это обычный файл
 локальной базы данных, отдельный сервер для него не нужен.
 
 В таблице `applications` хранятся заявки пользователей: Telegram ID, username,

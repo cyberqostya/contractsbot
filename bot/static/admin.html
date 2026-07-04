@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BogrBot Admin</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <title>BabycollabBot Admin</title>
+  <script src="/static/vendor/telegram-web-app.js"></script>
+  <script src="/static/vendor/vue.global.prod.js"></script>
   <style>
     :root {
       color-scheme: light;
@@ -435,7 +435,7 @@
   <div id="app" v-cloak>
     <div v-if="needsToken" class="shell">
       <form class="token" @submit.prevent="saveToken">
-        <h1>BogrBot Admin</h1>
+        <h1>BabycollabBot Admin</h1>
         <p v-if="error" class="notice error">{{ error }}</p>
         <div class="field">
           <label for="token">Админ-токен</label>
@@ -447,7 +447,7 @@
 
     <div v-else-if="accessDenied || !bootstrapped" class="shell">
       <div class="token">
-        <h1>{{ accessDenied ? "Доступ закрыт" : "BogrBot Admin" }}</h1>
+        <h1>{{ accessDenied ? "Доступ закрыт" : "BabycollabBot Admin" }}</h1>
         <p v-if="accessDenied" class="notice error">{{ error || "Недостаточно прав" }}</p>
         <p v-else class="empty">Проверяю доступ...</p>
       </div>
@@ -560,7 +560,7 @@
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token") || "";
     if (urlToken) {
-      localStorage.setItem("bogrbot_admin_token", urlToken);
+      localStorage.setItem("babycollabbot_admin_token", urlToken);
       params.delete("token");
       const query = params.toString();
       history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}`);
@@ -569,7 +569,7 @@
     Vue.createApp({
       data() {
         return {
-          token: localStorage.getItem("bogrbot_admin_token") || "",
+          token: localStorage.getItem("babycollabbot_admin_token") || "",
           tokenDraft: "",
           templates: [],
           utmFields: [],
@@ -643,7 +643,7 @@
             this.accessDenied = Boolean(this.initData);
             if (!this.initData) {
               this.token = "";
-              localStorage.removeItem("bogrbot_admin_token");
+              localStorage.removeItem("babycollabbot_admin_token");
             }
           } finally {
             this.checkingAccess = false;
@@ -651,13 +651,13 @@
         },
         saveToken() {
           this.token = this.tokenDraft;
-          localStorage.setItem("bogrbot_admin_token", this.token);
+          localStorage.setItem("babycollabbot_admin_token", this.token);
           this.bootstrap();
         },
         logout() {
           this.token = "";
           this.tokenDraft = "";
-          localStorage.removeItem("bogrbot_admin_token");
+          localStorage.removeItem("babycollabbot_admin_token");
         },
         closeKeyboard() {
           if (document.activeElement && typeof document.activeElement.blur === "function") {
