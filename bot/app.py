@@ -257,7 +257,11 @@ async def receive_signed_contract(
 
     db.update_files(application_id, signed_contract_file_id=document.file_id)
     db.set_status(application_id, "waiting_invoice")
-    await message.answer("Принял договор. Теперь отправьте счет в формате PDF, PNG или JPG")
+    await message.answer(
+        "Договор принят.\n"
+        "<b>Отправьте счёт</b> в формате PDF, PNG или JPG.\n"
+        "Наименование счёта укажите: <code>Создание контента или видеоматериалов</code>."
+    )
 
 
 @router.message(F.document | F.photo)
